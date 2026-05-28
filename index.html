@@ -21,12 +21,14 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useMemo, useEffect } = React;
+const { useState, useMemo, useEffect, useRef } = React;
 
-// ── Supabase 설정 ─────────────────────────────────────────────
 const SUPABASE_URL  = "https://yyrvqegkarbptikydmng.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5cnZxZWdrYXJicHRpa3lkbW5nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NDc4NzYsImV4cCI6MjA5NTUyMzg3Nn0.oFcHpXDqfRMSW6guUECjndUOc0FDBEJFBCdlmj_-crE";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const DEFAULT_ACCOUNTS = ["A계좌", "B계좌", "C계좌"];
+const LS_ACCOUNTS = "portfolio-accounts-v1";
 
 const ASSETS = [
   { id: "domestic_stock",  label: "국내주식",         target: 30, color: "#4ECDC4" },
@@ -36,74 +38,90 @@ const ASSETS = [
   { id: "crypto",          label: "가상화폐",          target: 5,  color: "#DDA0DD" },
   { id: "bond",            label: "채권",              target: 5,  color: "#F0A500" },
 ];
-const ACCOUNTS = ["A계좌", "B계좌", "C계좌"];
 
-const fmt = n => n >= 10000 ? `${(n/10000).toLocaleString("ko-KR",{maximumFractionDigits:1})}만` : n.toLocaleString("ko-KR");
-const parseMillion = v => { const n=parseFloat(String(v).replace(/,/g,"")); return isNaN(n)?0:Math.round(n*10000); };
+// ── 유틸 ──────────────────────────────────────────────────────
+const fmt = n => n.toLocaleString("ko-KR") + "원";
+const parseAmt = v => { const n = parseInt(String(v).replace(/,/g,"").replace(/원/g,"")); return isNaN(n) ? 0 : n; };
 const todayStr = () => new Date().toISOString().slice(0,10);
 const getWeekLabel = d => { const dt=new Date(d); const w=Math.ceil((dt.getDate()+new Date(dt.getFullYear(),dt.getMonth(),1).getDay())/7); return `${dt.getMonth()+1}월 ${w}주`; };
 const getMonthLabel = d => { const dt=new Date(d); return `${dt.getFullYear()}.${String(dt.getMonth()+1).padStart(2,"0")}`; };
+const loadLS = (k,d) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):d; } catch(_){return d;} };
+const saveLS = (k,v) => { try { localStorage.setItem(k,JSON.stringify(v)); } catch(_){} };
 
-// ── 로그인 화면 ───────────────────────────────────────────────
+// ── 로그인 ────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [email,    setEmail]    = useState("");
+  const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [mode,     setMode]     = useState("login"); // login | signup
-  const [error,    setError]    = useState("");
-  const [loading,  setLoading]  = useState(false);
+  const [mode, setMode]         = useState("login");
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
 
   const handle = async () => {
     if (!email || !password) { setError("이메일과 비밀번호를 입력해주세요"); return; }
     setLoading(true); setError("");
     try {
-      let res;
-      if (mode === "login") {
-        res = await sb.auth.signInWithPassword({ email, password });
-      } else {
-        res = await sb.auth.signUp({ email, password });
-        if (!res.error && res.data.user && !res.data.session) {
-          setError("가입 확인 이메일을 보냈어요. 확인 후 로그인해주세요."); setLoading(false); return;
-        }
-      }
+      const res = mode === "login"
+        ? await sb.auth.signInWithPassword({ email, password })
+        : await sb.auth.signUp({ email, password });
       if (res.error) throw res.error;
+      if (mode === "signup" && !res.data.session) { setError("가입 확인 이메일을 확인해주세요"); setLoading(false); return; }
       onLogin(res.data.user);
     } catch(e) {
       setError(e.message === "Invalid login credentials" ? "이메일 또는 비밀번호가 틀렸어요" : e.message);
     } finally { setLoading(false); }
   };
 
-  const inp = { style:{ width:"100%", padding:"12px 14px", background:"#f5f7fa", border:"1px solid #dde1ea", borderRadius:10, color:"#1a202c", fontSize:14, marginTop:6, outline:"none" }};
+  const inp = { style:{ width:"100%", padding:"13px 14px", background:"#f5f7fa", border:"1px solid #dde1ea", borderRadius:10, color:"#1a202c", fontSize:15, marginTop:6, outline:"none" }};
 
   return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg,#f8fafc,#eef2ff)", padding:20 }}>
       <div style={{ background:"#fff", borderRadius:20, padding:36, width:"min(92vw,400px)", boxShadow:"0 20px 60px rgba(0,0,0,0.1)" }}>
         <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ fontSize:11, letterSpacing:3, color:"#4ECDC4", textTransform:"uppercase", fontWeight:700 }}>Portfolio</div>
-          <h1 style={{ fontSize:22, fontWeight:800, marginTop:4 }}>내 투자 포트폴리오</h1>
-          <p style={{ fontSize:13, color:"#64748b", marginTop:6 }}>{mode==="login"?"로그인하여 시작하세요":"계정을 만들어주세요"}</p>
+          <div style={{ fontSize:12, letterSpacing:3, color:"#4ECDC4", textTransform:"uppercase", fontWeight:700 }}>Portfolio</div>
+          <h1 style={{ fontSize:24, fontWeight:800, marginTop:4 }}>내 투자 포트폴리오</h1>
+          <p style={{ fontSize:14, color:"#64748b", marginTop:6 }}>{mode==="login"?"로그인하여 시작하세요":"계정을 만들어주세요"}</p>
         </div>
-
-        <label style={{ fontSize:12, fontWeight:700, color:"#64748b" }}>이메일</label>
-        <input {...inp} type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&handle()} />
-
-        <label style={{ fontSize:12, fontWeight:700, color:"#64748b", display:"block", marginTop:14 }}>비밀번호</label>
-        <input {...inp} type="password" placeholder="비밀번호" value={password} onChange={e=>setPassword(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&handle()} />
-
-        {error && <div style={{ marginTop:12, padding:"10px 12px", background:"#fff1f2", border:"1px solid #fecdd3", borderRadius:8, fontSize:12, color:"#dc2626" }}>{error}</div>}
-
+        <label style={{ fontSize:13, fontWeight:700, color:"#64748b" }}>이메일</label>
+        <input {...inp} type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} />
+        <label style={{ fontSize:13, fontWeight:700, color:"#64748b", display:"block", marginTop:14 }}>비밀번호</label>
+        <input {...inp} type="password" placeholder="비밀번호" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} />
+        {error && <div style={{ marginTop:12, padding:"10px 12px", background:"#fff1f2", border:"1px solid #fecdd3", borderRadius:8, fontSize:13, color:"#dc2626" }}>{error}</div>}
         <button onClick={handle} disabled={loading}
-          style={{ width:"100%", marginTop:20, padding:"13px", background:loading?"#c8cdd9":"#4ECDC4", color:"#fff", border:"none", borderRadius:12, fontSize:15, fontWeight:800, cursor:loading?"not-allowed":"pointer" }}>
+          style={{ width:"100%", marginTop:20, padding:"14px", background:loading?"#c8cdd9":"#4ECDC4", color:"#fff", border:"none", borderRadius:12, fontSize:16, fontWeight:800, cursor:loading?"not-allowed":"pointer" }}>
           {loading ? "처리 중…" : mode==="login" ? "로그인" : "회원가입"}
         </button>
-
         <div style={{ textAlign:"center", marginTop:16 }}>
           <button onClick={()=>{setMode(mode==="login"?"signup":"login"); setError("");}}
-            style={{ background:"none", border:"none", fontSize:12, color:"#64748b", cursor:"pointer", textDecoration:"underline" }}>
+            style={{ background:"none", border:"none", fontSize:13, color:"#64748b", cursor:"pointer", textDecoration:"underline" }}>
             {mode==="login" ? "계정이 없으신가요? 회원가입" : "이미 계정이 있으신가요? 로그인"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 계좌명 편집 모달 ──────────────────────────────────────────
+function AccountModal({ accounts, onSave, onClose }) {
+  const [vals, setVals] = useState([...accounts]);
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }}>
+      <div style={{ background:"#fff", borderRadius:16, padding:28, width:"min(92vw,360px)", boxShadow:"0 20px 60px rgba(0,0,0,0.15)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+          <h2 style={{ fontSize:18, fontWeight:800 }}>계좌명 수정</h2>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:"#64748b" }}>✕</button>
+        </div>
+        {vals.map((v,i) => (
+          <div key={i} style={{ marginBottom:12 }}>
+            <label style={{ fontSize:13, fontWeight:700, color:"#64748b" }}>계좌 {i+1}</label>
+            <input value={v} onChange={e=>{ const a=[...vals]; a[i]=e.target.value; setVals(a); }}
+              style={{ width:"100%", marginTop:4, padding:"10px 12px", background:"#f5f7fa", border:"1px solid #dde1ea", borderRadius:8, fontSize:15, color:"#1a202c", outline:"none" }} />
+          </div>
+        ))}
+        <button onClick={()=>onSave(vals)}
+          style={{ width:"100%", marginTop:8, padding:"13px", background:"#4ECDC4", color:"#fff", border:"none", borderRadius:10, fontSize:15, fontWeight:800, cursor:"pointer" }}>
+          저장
+        </button>
       </div>
     </div>
   );
@@ -118,14 +136,14 @@ function GaugeBar({ actual, target, color }) {
   );
 }
 function Sparkline({ values, color }) {
-  if (values.length < 2) return React.createElement("span",{style:{color:"#64748b",fontSize:11}},"–");
+  if (values.length < 2) return React.createElement("span",{style:{color:"#64748b",fontSize:13}},"–");
   const max=Math.max(...values)||1, min=Math.min(...values), range=max-min||1;
   const W=80, H=28, pts=values.map((v,i)=>`${(i/(values.length-1))*W},${H-((v-min)/range)*H}`).join(" ");
   const delta=values[values.length-1]-values[values.length-2];
   return (
     <div style={{ display:"flex", alignItems:"center", gap:6 }}>
       <svg width={W} height={H}><polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-      <span style={{ fontSize:10, color:delta>=0?"#4ECDC4":"#FF6B6B", fontFamily:"monospace" }}>{delta>=0?"▲":"▼"}{fmt(Math.abs(delta))}</span>
+      <span style={{ fontSize:11, color:delta>=0?"#4ECDC4":"#FF6B6B", fontFamily:"monospace" }}>{delta>=0?"▲":"▼"}{Math.abs(delta).toLocaleString()}</span>
     </div>
   );
 }
@@ -143,15 +161,15 @@ function DonutChart({ data, size=140 }) {
 function TrendCard({ title, color, periods, values }) {
   const max=Math.max(...values,1), last=values[values.length-1], prev=values.length>1?values[values.length-2]:null, delta=prev!==null?last-prev:null;
   return (
-    <div style={{ background:"#f5f7fa", borderRadius:12, padding:14, border:"1px solid #dde1ea" }}>
+    <div style={{ background:"#f5f7fa", borderRadius:12, padding:16, border:"1px solid #dde1ea" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           <div style={{ width:10, height:10, borderRadius:"50%", background:color }}/>
-          <span style={{ fontSize:13, fontWeight:700 }}>{title}</span>
+          <span style={{ fontSize:15, fontWeight:700 }}>{title}</span>
         </div>
         <div style={{ textAlign:"right" }}>
-          <div style={{ fontSize:14, fontWeight:800, color }}>{fmt(last)}원</div>
-          {delta!==null&&<div style={{ fontSize:10, color:delta>=0?"#4ECDC4":"#FF6B6B", marginTop:2 }}>{delta>=0?"▲":"▼"} {fmt(Math.abs(delta))}원</div>}
+          <div style={{ fontSize:15, fontWeight:800, color }}>{fmt(last)}</div>
+          {delta!==null&&<div style={{ fontSize:11, color:delta>=0?"#4ECDC4":"#FF6B6B", marginTop:2 }}>{delta>=0?"▲":"▼"} {fmt(Math.abs(delta))}</div>}
         </div>
       </div>
       <div style={{ display:"flex", alignItems:"flex-end", gap:4, height:60 }}>
@@ -165,25 +183,26 @@ function TrendCard({ title, color, periods, values }) {
     </div>
   );
 }
-const TH=(e={})=>({ padding:"10px 8px", fontSize:11, fontWeight:700, borderBottom:"1px solid #dde1ea", color:"#64748b", textAlign:"center", letterSpacing:0.5, ...e });
-const TD=(e={})=>({ padding:"10px 6px", verticalAlign:"middle", ...e });
+const TH=(e={})=>({ padding:"12px 8px", fontSize:13, fontWeight:700, borderBottom:"1px solid #dde1ea", color:"#64748b", textAlign:"center", letterSpacing:0.3, ...e });
+const TD=(e={})=>({ padding:"12px 6px", verticalAlign:"middle", ...e });
 
-// ── 메인 앱 ───────────────────────────────────────────────────
+// ── 포트폴리오 ────────────────────────────────────────────────
 function Portfolio({ user, onLogout }) {
-  const [entries,   setEntries]   = useState([]);
-  const [syncMsg,   setSyncMsg]   = useState("불러오는 중…");
-  const [syncColor, setSyncColor] = useState("#F0A500");
-  const [mode,      setMode]      = useState("weekly");
-  const [activeTab, setActiveTab] = useState("matrix");
-  const [inputDate, setInputDate] = useState(todayStr());
-  const [editCell,  setEditCell]  = useState(null);
-  const [inputVal,  setInputVal]  = useState("");
+  const [entries,    setEntries]    = useState([]);
+  const [accounts,   setAccounts]   = useState(()=>loadLS(LS_ACCOUNTS, DEFAULT_ACCOUNTS));
+  const [syncMsg,    setSyncMsg]    = useState("불러오는 중…");
+  const [syncColor,  setSyncColor]  = useState("#F0A500");
+  const [mode,       setMode]       = useState("weekly");
+  const [activeTab,  setActiveTab]  = useState("matrix");
+  const [inputDate,  setInputDate]  = useState(todayStr());
+  const [editCell,   setEditCell]   = useState(null);
+  const [inputVal,   setInputVal]   = useState("");
+  const [showAccMod, setShowAccMod] = useState(false);
 
-  // 불러오기
   useEffect(() => {
     sb.from("entries").select("*").eq("user_id", user.id)
       .then(({ data, error }) => {
-        if (error) { setSyncMsg("❌ 불러오기 실패"); setSyncColor("#FF6B6B"); console.error(error); return; }
+        if (error) { setSyncMsg("❌ 불러오기 실패"); setSyncColor("#FF6B6B"); return; }
         setEntries((data||[]).map(r=>({ date:r.date, account:r.account, assetId:r.asset_id, amount:r.amount, dbId:r.id })));
         setSyncMsg("✓ 동기화됨"); setSyncColor("#4ECDC4");
       });
@@ -195,23 +214,20 @@ function Portfolio({ user, onLogout }) {
 
   const getAmt    = (p,acc,aid) => entries.filter(e=>periodOf(e.date)===p&&e.account===acc&&e.assetId===aid).reduce((s,e)=>s+e.amount,0);
   const accTotal  = (p,acc)     => ASSETS.reduce((s,a)=>s+getAmt(p,acc,a.id),0);
-  const grandTotal= (p)         => ACCOUNTS.reduce((s,acc)=>s+accTotal(p,acc),0);
-  const assetTotal= (p,aid)     => ACCOUNTS.reduce((s,acc)=>s+getAmt(p,acc,aid),0);
+  const grandTotal= (p)         => accounts.reduce((s,acc)=>s+accTotal(p,acc),0);
+  const assetTotal= (p,aid)     => accounts.reduce((s,acc)=>s+getAmt(p,acc,aid),0);
 
   const openEdit = (acc,aid) => {
     setEditCell({account:acc, assetId:aid});
     const c=getAmt(CP,acc,aid);
-    setInputVal(c?(c/10000).toString():"");
+    setInputVal(c?c.toString():"");
   };
 
   const commitEdit = async () => {
     if (!editCell) return;
-    const amt = parseMillion(inputVal);
+    const amt = parseAmt(inputVal);
     setSyncMsg("저장 중…"); setSyncColor("#F0A500");
-
-    // 기존 행 찾기
     const existing = entries.find(e=>periodOf(e.date)===CP&&e.account===editCell.account&&e.assetId===editCell.assetId);
-
     try {
       if (existing) {
         if (amt > 0) {
@@ -232,9 +248,15 @@ function Portfolio({ user, onLogout }) {
       }
       setSyncMsg("✓ 저장됨"); setSyncColor("#4ECDC4");
     } catch(e) {
-      setSyncMsg(`❌ 저장 실패: ${e.message}`); setSyncColor("#FF6B6B"); console.error(e);
+      setSyncMsg(`❌ 저장 실패: ${e.message}`); setSyncColor("#FF6B6B");
     }
     setEditCell(null); setInputVal("");
+  };
+
+  const saveAccounts = (vals) => {
+    setAccounts(vals);
+    saveLS(LS_ACCOUNTS, vals);
+    setShowAccMod(false);
   };
 
   const totalNow  = grandTotal(CP);
@@ -243,19 +265,21 @@ function Portfolio({ user, onLogout }) {
 
   return (
     <div style={{ minHeight:"100vh", background:"#ffffff", paddingBottom:60 }}>
+      {showAccMod && <AccountModal accounts={accounts} onSave={saveAccounts} onClose={()=>setShowAccMod(false)} />}
+
       {/* 헤더 */}
       <div style={{ background:"linear-gradient(135deg,#f8fafc,#eef2ff)", borderBottom:"1px solid #dde1ea", padding:"24px 20px 0" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
-            <div style={{ fontSize:11, letterSpacing:3, color:"#4ECDC4", textTransform:"uppercase", fontWeight:700 }}>Portfolio</div>
-            <h1 style={{ margin:"2px 0 0", fontSize:22, fontWeight:800 }}>내 투자 포트폴리오</h1>
+            <div style={{ fontSize:12, letterSpacing:3, color:"#4ECDC4", textTransform:"uppercase", fontWeight:700 }}>Portfolio</div>
+            <h1 style={{ margin:"2px 0 0", fontSize:24, fontWeight:800 }}>내 투자 포트폴리오</h1>
           </div>
           <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-            <span style={{ fontSize:11, color:"#64748b" }}>{user.email}</span>
+            <span style={{ fontSize:12, color:"#64748b" }}>{user.email}</span>
             <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-              <span style={{ fontSize:11, color:syncColor }}>{syncMsg}</span>
+              <span style={{ fontSize:12, color:syncColor }}>{syncMsg}</span>
               <button onClick={onLogout}
-                style={{ padding:"4px 10px", fontSize:11, background:"#f5f7fa", border:"1px solid #dde1ea", color:"#64748b", borderRadius:6, cursor:"pointer" }}>
+                style={{ padding:"5px 12px", fontSize:12, background:"#f5f7fa", border:"1px solid #dde1ea", color:"#64748b", borderRadius:6, cursor:"pointer" }}>
                 로그아웃
               </button>
             </div>
@@ -264,22 +288,26 @@ function Portfolio({ user, onLogout }) {
 
         <div style={{ display:"flex", gap:8, marginTop:16, flexWrap:"wrap", alignItems:"center" }}>
           <input type="date" value={inputDate} onChange={e=>setInputDate(e.target.value)}
-            style={{ background:"#eef0f5", border:"1px solid #c8cdd9", color:"#1a202c", borderRadius:8, padding:"6px 10px", fontSize:13 }}/>
+            style={{ background:"#eef0f5", border:"1px solid #c8cdd9", color:"#1a202c", borderRadius:8, padding:"7px 10px", fontSize:14 }}/>
           <div style={{ display:"flex", background:"#eef0f5", borderRadius:8, border:"1px solid #c8cdd9", overflow:"hidden" }}>
             {["weekly","monthly"].map(m=>(
               <button key={m} onClick={()=>setMode(m)}
-                style={{ padding:"6px 14px", fontSize:12, border:"none", cursor:"pointer", background:mode===m?"#4ECDC4":"transparent", color:mode===m?"#fff":"#64748b", fontWeight:mode===m?700:400 }}>
+                style={{ padding:"7px 16px", fontSize:13, border:"none", cursor:"pointer", background:mode===m?"#4ECDC4":"transparent", color:mode===m?"#fff":"#64748b", fontWeight:mode===m?700:400 }}>
                 {m==="weekly"?"주간":"월간"}
               </button>
             ))}
           </div>
-          <div style={{ marginLeft:"auto", background:"#eef0f5", border:"1px solid #c8cdd9", borderRadius:8, padding:"6px 14px", fontSize:12, color:"#4ECDC4" }}>{CP} 기준</div>
+          <button onClick={()=>setShowAccMod(true)}
+            style={{ padding:"7px 14px", fontSize:13, background:"#eef0f5", border:"1px solid #c8cdd9", color:"#475569", borderRadius:8, cursor:"pointer", fontWeight:600 }}>
+            ✏️ 계좌명 수정
+          </button>
+          <div style={{ marginLeft:"auto", background:"#eef0f5", border:"1px solid #c8cdd9", borderRadius:8, padding:"7px 14px", fontSize:13, color:"#4ECDC4" }}>{CP} 기준</div>
         </div>
 
         <div style={{ display:"flex", marginTop:20 }}>
           {[["matrix","📊 매트릭스"],["trend","📈 추이"],["summary","🥧 요약"]].map(([key,label])=>(
             <button key={key} onClick={()=>setActiveTab(key)}
-              style={{ padding:"10px 18px", background:"none", border:"none", cursor:"pointer", fontSize:13, fontWeight:600,
+              style={{ padding:"11px 20px", background:"none", border:"none", cursor:"pointer", fontSize:14, fontWeight:600,
                 color:activeTab===key?"#4ECDC4":"#64748b", borderBottom:activeTab===key?"2px solid #4ECDC4":"2px solid transparent" }}>
               {label}
             </button>
@@ -291,16 +319,16 @@ function Portfolio({ user, onLogout }) {
         {/* ══ 매트릭스 ══ */}
         {activeTab==="matrix" && (
           <div>
-            <p style={{ fontSize:12, color:"#64748b", marginBottom:14 }}>셀을 클릭하여 금액(만원 단위)을 입력하세요</p>
+            <p style={{ fontSize:13, color:"#64748b", marginBottom:14 }}>셀을 클릭하여 금액(원 단위)을 입력 후 Enter로 저장하세요</p>
             <div style={{ overflowX:"auto" }}>
-              <table style={{ width:"100%", minWidth:540 }}>
+              <table style={{ width:"100%", minWidth:560 }}>
                 <thead>
                   <tr>
-                    <th style={TH({width:140,textAlign:"left"})}>투자항목</th>
-                    <th style={TH({width:52,color:"#4ECDC4"})}>목표</th>
-                    {ACCOUNTS.map(acc=><th key={acc} style={TH({color:"#45B7D1"})}>{acc}</th>)}
+                    <th style={TH({width:150,textAlign:"left"})}>투자항목</th>
+                    <th style={TH({width:56,color:"#4ECDC4"})}>목표</th>
+                    {accounts.map(acc=><th key={acc} style={TH({color:"#45B7D1"})}>{acc}</th>)}
                     <th style={TH({color:"#F0A500"})}>합계</th>
-                    <th style={TH({color:"#64748b",width:100})}>추이</th>
+                    <th style={TH({color:"#64748b",width:110})}>추이</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -309,56 +337,56 @@ function Portfolio({ user, onLogout }) {
                     return (
                       <tr key={asset.id} style={{ borderBottom:"1px solid #eef0f5" }}>
                         <td style={TD({paddingLeft:0})}>
-                          <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                            <div style={{ width:8, height:8, borderRadius:"50%", background:asset.color, flexShrink:0 }}/>
+                          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            <div style={{ width:9, height:9, borderRadius:"50%", background:asset.color, flexShrink:0 }}/>
                             <div style={{ flex:1 }}>
-                              <div style={{ fontSize:12, fontWeight:600 }}>{asset.label}</div>
-                              <div style={{ fontSize:10, color:"#475569", marginTop:1 }}>실{actualPct.toFixed(1)}% / 목{asset.target}%</div>
+                              <div style={{ fontSize:14, fontWeight:600 }}>{asset.label}</div>
+                              <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>실{actualPct.toFixed(1)}% / 목{asset.target}%</div>
                               <GaugeBar actual={actualPct} target={asset.target} color={asset.color}/>
                             </div>
                           </div>
                         </td>
-                        <td style={TD({textAlign:"center",color:"#64748b",fontSize:12})}>{asset.target}%</td>
-                        {ACCOUNTS.map(acc=>{
+                        <td style={TD({textAlign:"center",color:"#64748b",fontSize:14})}>{asset.target}%</td>
+                        {accounts.map(acc=>{
                           const amt=getAmt(CP,acc,asset.id), isEd=editCell?.account===acc&&editCell?.assetId===asset.id;
                           return (
                             <td key={acc} style={TD({textAlign:"center"})} onClick={()=>!isEd&&openEdit(acc,asset.id)}>
                               {isEd?(
                                 <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
-                                  <input autoFocus value={inputVal} onChange={e=>setInputVal(e.target.value)}
-                                    onKeyDown={e=>{if(e.key==="Enter")commitEdit();if(e.key==="Escape")setEditCell(null);}}
-                                    placeholder="만원"
-                                    style={{ width:68, padding:"4px 6px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:6, color:"#4ECDC4", fontSize:12, textAlign:"right" }}/>
-                                  <button onClick={commitEdit}
-                                    style={{ fontSize:10, padding:"2px 10px", background:"#4ECDC4", color:"#fff", border:"none", borderRadius:4, cursor:"pointer", fontWeight:700 }}>확인</button>
+                                  <input autoFocus value={inputVal}
+                                    onChange={e=>setInputVal(e.target.value)}
+                                    onKeyDown={e=>{ if(e.key==="Enter")commitEdit(); if(e.key==="Escape")setEditCell(null); }}
+                                    placeholder="원"
+                                    style={{ width:100, padding:"5px 8px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:6, color:"#4ECDC4", fontSize:14, textAlign:"right", outline:"none" }}/>
+                                  <div style={{ fontSize:10, color:"#94a3b8" }}>Enter로 저장 / Esc 취소</div>
                                 </div>
                               ):(
-                                <div style={{ padding:"6px 4px", borderRadius:6, cursor:"pointer", background:amt>0?"rgba(78,205,196,0.12)":"transparent", border:"1px solid transparent", minHeight:38, display:"flex", alignItems:"center", justifyContent:"center" }}
+                                <div style={{ padding:"8px 4px", borderRadius:6, cursor:"pointer", background:amt>0?"rgba(78,205,196,0.12)":"transparent", border:"1px solid transparent", minHeight:42, display:"flex", alignItems:"center", justifyContent:"center", transition:"border 0.15s" }}
                                   onMouseEnter={e=>e.currentTarget.style.border="1px solid #c8cdd9"}
                                   onMouseLeave={e=>e.currentTarget.style.border="1px solid transparent"}>
-                                  {amt>0?<span style={{fontSize:12}}>{fmt(amt)}원</span>:<span style={{fontSize:20,color:"#c8cdd9"}}>+</span>}
+                                  {amt>0?<span style={{fontSize:14}}>{fmt(amt)}</span>:<span style={{fontSize:22,color:"#c8cdd9"}}>+</span>}
                                 </div>
                               )}
                             </td>
                           );
                         })}
                         <td style={TD({textAlign:"center"})}>
-                          <span style={{ fontSize:12, color:"#F0A500", fontWeight:700 }}>{rowTotal>0?fmt(rowTotal)+"원":"–"}</span>
+                          <span style={{ fontSize:14, color:"#F0A500", fontWeight:700 }}>{rowTotal>0?fmt(rowTotal):"–"}</span>
                         </td>
                         <td style={TD()}><Sparkline values={periods.map(p=>assetTotal(p,asset.id))} color={asset.color}/></td>
                       </tr>
                     );
                   })}
                   <tr style={{ background:"#eef2ff", borderTop:"2px solid #c8cdd9" }}>
-                    <td style={TD({color:"#64748b",fontSize:12})}>합계</td>
-                    <td style={TD({textAlign:"center",color:"#64748b",fontSize:11})}>100%</td>
-                    {ACCOUNTS.map(acc=>(
+                    <td style={TD({color:"#64748b",fontSize:14})}>합계</td>
+                    <td style={TD({textAlign:"center",color:"#64748b",fontSize:13})}>100%</td>
+                    {accounts.map(acc=>(
                       <td key={acc} style={TD({textAlign:"center"})}>
-                        <span style={{ fontSize:12, color:"#45B7D1", fontWeight:700 }}>{accTotal(CP,acc)>0?fmt(accTotal(CP,acc))+"원":"–"}</span>
+                        <span style={{ fontSize:14, color:"#45B7D1", fontWeight:700 }}>{accTotal(CP,acc)>0?fmt(accTotal(CP,acc)):"–"}</span>
                       </td>
                     ))}
                     <td style={TD({textAlign:"center"})}>
-                      <span style={{ fontSize:13, color:"#4ECDC4", fontWeight:800 }}>{totalNow>0?fmt(totalNow)+"원":"–"}</span>
+                      <span style={{ fontSize:15, color:"#4ECDC4", fontWeight:800 }}>{totalNow>0?fmt(totalNow):"–"}</span>
                     </td>
                     <td style={TD()}/>
                   </tr>
@@ -373,7 +401,7 @@ function Portfolio({ user, onLogout }) {
           periods.length===0
             ? <div style={{ textAlign:"center", color:"#475569", padding:"60px 20px" }}>
                 <div style={{ fontSize:40, marginBottom:12 }}>📭</div>
-                <div>아직 데이터가 없어요</div>
+                <div style={{ fontSize:15 }}>아직 데이터가 없어요</div>
               </div>
             : <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
                 <TrendCard title="총 합계" color="#4ECDC4" periods={periods} values={periods.map(p=>grandTotal(p))}/>
@@ -389,22 +417,22 @@ function Portfolio({ user, onLogout }) {
             <div style={{ display:"flex", justifyContent:"center", marginBottom:24 }}>
               <div style={{ textAlign:"center" }}>
                 <DonutChart data={donutData} size={140}/>
-                <div style={{ marginTop:8, fontSize:11, color:"#64748b" }}>{CP} 현재</div>
-                <div style={{ fontSize:20, fontWeight:800, color:"#4ECDC4", marginTop:4 }}>{totalNow>0?`총 ${fmt(totalNow)}원`:"데이터 없음"}</div>
+                <div style={{ marginTop:8, fontSize:13, color:"#64748b" }}>{CP} 현재</div>
+                <div style={{ fontSize:22, fontWeight:800, color:"#4ECDC4", marginTop:4 }}>{totalNow>0?`총 ${fmt(totalNow)}`:"데이터 없음"}</div>
               </div>
             </div>
             {ASSETS.map(a=>{
               const amt=assetTotal(CP,a.id), actual=totalNow>0?(amt/totalNow)*100:0, diff=actual-a.target;
               return (
-                <div key={a.id} style={{ background:"#f5f7fa", borderRadius:10, padding:"12px 14px", border:"1px solid #dde1ea", marginBottom:8 }}>
+                <div key={a.id} style={{ background:"#f5f7fa", borderRadius:10, padding:"14px 16px", border:"1px solid #dde1ea", marginBottom:10 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                       <div style={{ width:10, height:10, borderRadius:"50%", background:a.color }}/>
-                      <span style={{ fontSize:13, fontWeight:600 }}>{a.label}</span>
+                      <span style={{ fontSize:15, fontWeight:600 }}>{a.label}</span>
                     </div>
                     <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                      <span style={{ fontSize:11, color:"#64748b" }}>목표 {a.target}%</span>
-                      <span style={{ fontSize:11, fontWeight:700, color:Math.abs(diff)<2?"#4ECDC4":diff>0?"#FF6B6B":"#F0A500" }}>
+                      <span style={{ fontSize:13, color:"#64748b" }}>목표 {a.target}%</span>
+                      <span style={{ fontSize:13, fontWeight:700, color:Math.abs(diff)<2?"#4ECDC4":diff>0?"#FF6B6B":"#F0A500" }}>
                         실{actual.toFixed(1)}% ({diff>=0?"+":""}{diff.toFixed(1)}%)
                       </span>
                     </div>
@@ -413,20 +441,20 @@ function Portfolio({ user, onLogout }) {
                     <div style={{ width:`${Math.min((actual/(a.target||1))*100,100)}%`, height:"100%", background:a.color, borderRadius:4, transition:"width 0.5s" }}/>
                   </div>
                   <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
-                    <span style={{ fontSize:11, color:"#475569" }}>{amt>0?fmt(amt)+"원":"미입력"}</span>
-                    <span style={{ fontSize:10, color:"#475569" }}>{diff>2?"▲ 비중 초과":diff<-2?"▼ 비중 부족":"✓ 균형"}</span>
+                    <span style={{ fontSize:13, color:"#475569" }}>{amt>0?fmt(amt):"미입력"}</span>
+                    <span style={{ fontSize:12, color:"#475569" }}>{diff>2?"▲ 비중 초과":diff<-2?"▼ 비중 부족":"✓ 균형"}</span>
                   </div>
                 </div>
               );
             })}
             <div style={{ marginTop:20 }}>
-              <div style={{ fontSize:13, fontWeight:700, color:"#64748b", marginBottom:10 }}>계좌별 현황</div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#64748b", marginBottom:10 }}>계좌별 현황</div>
               <div style={{ display:"flex", gap:8 }}>
-                {ACCOUNTS.map(acc=>{ const amt=accTotal(CP,acc), pct=totalNow>0?(amt/totalNow)*100:0;
-                  return <div key={acc} style={{ flex:1, background:"#f5f7fa", borderRadius:10, padding:12, border:"1px solid #dde1ea", textAlign:"center" }}>
-                    <div style={{ fontSize:12, color:"#45B7D1", fontWeight:700 }}>{acc}</div>
-                    <div style={{ fontSize:14, fontWeight:800, marginTop:6 }}>{amt>0?fmt(amt)+"원":"–"}</div>
-                    <div style={{ fontSize:10, color:"#64748b", marginTop:4 }}>{pct.toFixed(1)}%</div>
+                {accounts.map(acc=>{ const amt=accTotal(CP,acc), pct=totalNow>0?(amt/totalNow)*100:0;
+                  return <div key={acc} style={{ flex:1, background:"#f5f7fa", borderRadius:10, padding:14, border:"1px solid #dde1ea", textAlign:"center" }}>
+                    <div style={{ fontSize:14, color:"#45B7D1", fontWeight:700 }}>{acc}</div>
+                    <div style={{ fontSize:15, fontWeight:800, marginTop:6 }}>{amt>0?fmt(amt):"–"}</div>
+                    <div style={{ fontSize:12, color:"#64748b", marginTop:4 }}>{pct.toFixed(1)}%</div>
                   </div>;
                 })}
               </div>
@@ -441,7 +469,7 @@ function Portfolio({ user, onLogout }) {
 
 // ── 루트 ─────────────────────────────────────────────────────
 function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser]       = useState(null);
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
@@ -458,8 +486,8 @@ function App() {
   const handleLogout = async () => { await sb.auth.signOut(); };
 
   if (checking) return (
-    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#f8fafc" }}>
-      <div style={{ fontSize:13, color:"#64748b" }}>로딩 중…</div>
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ fontSize:15, color:"#64748b" }}>로딩 중…</div>
     </div>
   );
 
