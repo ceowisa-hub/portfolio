@@ -183,7 +183,7 @@ function Portfolio({ user, onLogout }) {
   useEffect(() => {
     sb.from("entries").select("*").eq("user_id", user.id)
       .then(({ data, error }) => {
-        if (error) { setSyncMsg("❌ 불러오기 실패"); setSyncColor("#FF6B6B"); return; }
+        if (error) { setSyncMsg("❌ 불러오기 실패"); setSyncColor("#FF6B6B"); console.error(error); return; }
         setEntries((data||[]).map(r=>({ date:r.date, account:r.account, assetId:r.asset_id, amount:r.amount, dbId:r.id })));
         setSyncMsg("✓ 동기화됨"); setSyncColor("#4ECDC4");
       });
@@ -215,10 +215,12 @@ function Portfolio({ user, onLogout }) {
     try {
       if (existing) {
         if (amt > 0) {
-          await sb.from("entries").update({ amount:amt }).eq("id", existing.dbId);
+          const { error } = await sb.from("entries").update({ amount:amt }).eq("id", existing.dbId);
+          if (error) throw error;
           setEntries(prev=>prev.map(e=>e.dbId===existing.dbId?{...e,amount:amt}:e));
         } else {
-          await sb.from("entries").delete().eq("id", existing.dbId);
+          const { error } = await sb.from("entries").delete().eq("id", existing.dbId);
+          if (error) throw error;
           setEntries(prev=>prev.filter(e=>e.dbId!==existing.dbId));
         }
       } else if (amt > 0) {
@@ -230,7 +232,7 @@ function Portfolio({ user, onLogout }) {
       }
       setSyncMsg("✓ 저장됨"); setSyncColor("#4ECDC4");
     } catch(e) {
-      setSyncMsg("❌ 저장 실패"); setSyncColor("#FF6B6B");
+      setSyncMsg(`❌ 저장 실패: ${e.message}`); setSyncColor("#FF6B6B"); console.error(e);
     }
     setEditCell(null); setInputVal("");
   };
