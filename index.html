@@ -31,9 +31,10 @@ const ASSETS = [
   { id: "bond",            label: "채권",              target: 5,  color: "#F0A500" },
 ];
 const ACCOUNTS = ["A계좌", "B계좌", "C계좌"];
-const LS_ENTRIES = "portfolio-entries-v1";
-const LS_TOKEN   = "portfolio-gh-token";
-const LS_GIST    = "portfolio-gh-gist";
+const LS_ENTRIES   = "portfolio-entries-v1";
+const LS_TOKEN     = "portfolio-gh-token";
+const LS_GIST      = "portfolio-gh-gist";
+const FIXED_GIST_ID = "4e10b9c7b15a3d0d5d42a34649eeb6c5";
 
 const fmt = n => n >= 10000
   ? `${(n/10000).toLocaleString("ko-KR",{maximumFractionDigits:1})}만`
@@ -135,8 +136,9 @@ function SettingsModal({ onClose, onSaved }) {
         <label style={{ fontSize:12, fontWeight:700, color:"#64748b" }}>GitHub Personal Access Token</label>
         <input {...inp()} type="password" placeholder="ghp_xxxxxxxxxxxx" value={token} onChange={e=>setToken(e.target.value)} />
 
-        <label style={{ fontSize:12, fontWeight:700, color:"#64748b", display:"block", marginTop:14 }}>Gist ID <span style={{fontWeight:400, color:"#94a3b8"}}>(비워두면 자동 생성)</span></label>
-        <input {...inp()} type="text" placeholder="기존 Gist ID (선택사항)" value={gistId} onChange={e=>setGistId(e.target.value)} />
+        <div style={{ marginTop:14, padding:"8px 12px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:8, fontSize:12, color:"#0f766e" }}>
+          📌 Gist ID 고정됨: <code style={{fontSize:11}}>{FIXED_GIST_ID.slice(0,8)}…</code>
+        </div>
 
         {status && (
           <div style={{ marginTop:12, fontSize:12, padding:"8px 12px", background:"#f5f7fa", borderRadius:8, color: status.startsWith("✅")?"#0f766e":status.startsWith("❌")?"#dc2626":"#64748b" }}>
@@ -221,7 +223,7 @@ const TD=(e={})=>({ padding:"10px 6px", verticalAlign:"middle", ...e });
 function App() {
   const [entries, setEntries]       = useState(()=>loadLS(LS_ENTRIES,[]));
   const [ghToken, setGhToken]       = useState(()=>loadLS(LS_TOKEN,""));
-  const [gistId,  setGistId]        = useState(()=>loadLS(LS_GIST,""));
+  const [gistId,  setGistId]        = useState(FIXED_GIST_ID);
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | saved | error
   const [syncMsg,    setSyncMsg]    = useState("");
   const [showSettings, setShowSettings] = useState(false);
