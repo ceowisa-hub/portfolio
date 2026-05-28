@@ -7,6 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #ffffff; color: #1a202c; font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif; }
@@ -20,7 +21,12 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useMemo, useEffect, useCallback } = React;
+const { useState, useMemo, useEffect } = React;
+
+// ── Supabase 설정 ─────────────────────────────────────────────
+const SUPABASE_URL  = "https://yyrvqegkarbptikydmng.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5cnZxZWdrYXJicHRpa3lkbW5nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NDc4NzYsImV4cCI6MjA5NTUyMzg3Nn0.oFcHpXDqfRMSW6guUECjndUOc0FDBEJFBCdlmj_-crE";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 const ASSETS = [
   { id: "domestic_stock",  label: "국내주식",         target: 30, color: "#4ECDC4" },
@@ -31,131 +37,79 @@ const ASSETS = [
   { id: "bond",            label: "채권",              target: 5,  color: "#F0A500" },
 ];
 const ACCOUNTS = ["A계좌", "B계좌", "C계좌"];
-const LS_ENTRIES   = "portfolio-entries-v1";
-const LS_TOKEN     = "portfolio-gh-token";
-const LS_GIST      = "portfolio-gh-gist";
-const FIXED_GIST_ID = "4e10b9c7b15a3d0d5d42a34649eeb6c5";
 
-const fmt = n => n >= 10000
-  ? `${(n/10000).toLocaleString("ko-KR",{maximumFractionDigits:1})}만`
-  : n.toLocaleString("ko-KR");
+const fmt = n => n >= 10000 ? `${(n/10000).toLocaleString("ko-KR",{maximumFractionDigits:1})}만` : n.toLocaleString("ko-KR");
 const parseMillion = v => { const n=parseFloat(String(v).replace(/,/g,"")); return isNaN(n)?0:Math.round(n*10000); };
 const todayStr = () => new Date().toISOString().slice(0,10);
 const getWeekLabel = d => { const dt=new Date(d); const w=Math.ceil((dt.getDate()+new Date(dt.getFullYear(),dt.getMonth(),1).getDay())/7); return `${dt.getMonth()+1}월 ${w}주`; };
 const getMonthLabel = d => { const dt=new Date(d); return `${dt.getFullYear()}.${String(dt.getMonth()+1).padStart(2,"0")}`; };
 
-function loadLS(key, def) { try { const v=localStorage.getItem(key); return v?JSON.parse(v):def; } catch(_){return def;} }
-function saveLS(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch(_){} }
+// ── 로그인 화면 ───────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [mode,     setMode]     = useState("login"); // login | signup
+  const [error,    setError]    = useState("");
+  const [loading,  setLoading]  = useState(false);
 
-// ── GitHub Gist API ─────────────────────────────────────────
-const GIST_FILENAME = "portfolio_data.json";
-
-async function gistLoad(token, gistId) {
-  const res = await fetch(`https://api.github.com/gists/${gistId}`, {
-    headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json" }
-  });
-  if (!res.ok) throw new Error(`Gist 불러오기 실패 (${res.status})`);
-  const data = await res.json();
-  const content = data.files?.[GIST_FILENAME]?.content;
-  if (!content) throw new Error("파일을 찾을 수 없어요");
-  return JSON.parse(content);
-}
-
-async function gistSave(token, gistId, entries) {
-  const body = { files: { [GIST_FILENAME]: { content: JSON.stringify({ version:1, entries }, null, 2) } } };
-  const res = await fetch(`https://api.github.com/gists/${gistId}`, {
-    method: "PATCH",
-    headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) throw new Error(`Gist 저장 실패 (${res.status})`);
-}
-
-async function gistCreate(token) {
-  const body = {
-    description: "포트폴리오 데이터",
-    public: false,
-    files: { [GIST_FILENAME]: { content: JSON.stringify({ version:1, entries:[] }, null, 2) } }
-  };
-  const res = await fetch("https://api.github.com/gists", {
-    method: "POST",
-    headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) throw new Error(`Gist 생성 실패 (${res.status})`);
-  const data = await res.json();
-  return data.id;
-}
-
-// ── 설정 모달 ────────────────────────────────────────────────
-function SettingsModal({ onClose, onSaved }) {
-  const [token,   setToken]   = useState(() => loadLS(LS_TOKEN, ""));
-  const [gistId,  setGistId]  = useState(() => loadLS(LS_GIST,  ""));
-  const [status,  setStatus]  = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleConnect = async () => {
-    if (!token.trim()) { setStatus("❌ 토큰을 입력해주세요"); return; }
-    setLoading(true); setStatus("연결 중…");
+  const handle = async () => {
+    if (!email || !password) { setError("이메일과 비밀번호를 입력해주세요"); return; }
+    setLoading(true); setError("");
     try {
-      let id = gistId.trim();
-      if (!id) {
-        setStatus("Gist 생성 중…");
-        id = await gistCreate(token.trim());
-        setGistId(id);
+      let res;
+      if (mode === "login") {
+        res = await sb.auth.signInWithPassword({ email, password });
       } else {
-        await gistLoad(token.trim(), id);
+        res = await sb.auth.signUp({ email, password });
+        if (!res.error && res.data.user && !res.data.session) {
+          setError("가입 확인 이메일을 보냈어요. 확인 후 로그인해주세요."); setLoading(false); return;
+        }
       }
-      saveLS(LS_TOKEN, token.trim());
-      saveLS(LS_GIST,  id);
-      setStatus("✅ 연결 성공!");
-      setTimeout(() => { onSaved(token.trim(), id); onClose(); }, 800);
+      if (res.error) throw res.error;
+      onLogin(res.data.user);
     } catch(e) {
-      setStatus(`❌ ${e.message}`);
+      setError(e.message === "Invalid login credentials" ? "이메일 또는 비밀번호가 틀렸어요" : e.message);
     } finally { setLoading(false); }
   };
 
-  const inp = (extra={}) => ({
-    style:{ width:"100%", padding:"10px 12px", background:"#f5f7fa", border:"1px solid #dde1ea",
-      borderRadius:8, color:"#1a202c", fontSize:13, marginTop:6, ...extra.style },
-    ...extra
-  });
+  const inp = { style:{ width:"100%", padding:"12px 14px", background:"#f5f7fa", border:"1px solid #dde1ea", borderRadius:10, color:"#1a202c", fontSize:14, marginTop:6, outline:"none" }};
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }}>
-      <div style={{ background:"#fff", borderRadius:16, padding:28, width:"min(92vw,420px)", boxShadow:"0 20px 60px rgba(0,0,0,0.15)" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-          <h2 style={{ fontSize:17, fontWeight:800 }}>⚙️ GitHub Gist 연동</h2>
-          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:"#64748b" }}>✕</button>
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg,#f8fafc,#eef2ff)", padding:20 }}>
+      <div style={{ background:"#fff", borderRadius:20, padding:36, width:"min(92vw,400px)", boxShadow:"0 20px 60px rgba(0,0,0,0.1)" }}>
+        <div style={{ textAlign:"center", marginBottom:28 }}>
+          <div style={{ fontSize:11, letterSpacing:3, color:"#4ECDC4", textTransform:"uppercase", fontWeight:700 }}>Portfolio</div>
+          <h1 style={{ fontSize:22, fontWeight:800, marginTop:4 }}>내 투자 포트폴리오</h1>
+          <p style={{ fontSize:13, color:"#64748b", marginTop:6 }}>{mode==="login"?"로그인하여 시작하세요":"계정을 만들어주세요"}</p>
         </div>
 
-        <div style={{ background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:8, padding:12, marginBottom:18, fontSize:12, color:"#0f766e", lineHeight:1.6 }}>
-          🔒 토큰은 이 브라우저에만 저장되며 외부로 전송되지 않습니다
-        </div>
+        <label style={{ fontSize:12, fontWeight:700, color:"#64748b" }}>이메일</label>
+        <input {...inp} type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&handle()} />
 
-        <label style={{ fontSize:12, fontWeight:700, color:"#64748b" }}>GitHub Personal Access Token</label>
-        <input {...inp()} type="password" placeholder="ghp_xxxxxxxxxxxx" value={token} onChange={e=>setToken(e.target.value)} />
+        <label style={{ fontSize:12, fontWeight:700, color:"#64748b", display:"block", marginTop:14 }}>비밀번호</label>
+        <input {...inp} type="password" placeholder="비밀번호" value={password} onChange={e=>setPassword(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&handle()} />
 
-        <div style={{ marginTop:14, padding:"8px 12px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:8, fontSize:12, color:"#0f766e" }}>
-          📌 Gist ID 고정됨: <code style={{fontSize:11}}>{FIXED_GIST_ID.slice(0,8)}…</code>
-        </div>
+        {error && <div style={{ marginTop:12, padding:"10px 12px", background:"#fff1f2", border:"1px solid #fecdd3", borderRadius:8, fontSize:12, color:"#dc2626" }}>{error}</div>}
 
-        {status && (
-          <div style={{ marginTop:12, fontSize:12, padding:"8px 12px", background:"#f5f7fa", borderRadius:8, color: status.startsWith("✅")?"#0f766e":status.startsWith("❌")?"#dc2626":"#64748b" }}>
-            {status}
-          </div>
-        )}
-
-        <button onClick={handleConnect} disabled={loading}
-          style={{ width:"100%", marginTop:18, padding:"12px", background: loading?"#c8cdd9":"#4ECDC4", color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:800, cursor: loading?"not-allowed":"pointer" }}>
-          {loading ? "처리 중…" : "연결하기"}
+        <button onClick={handle} disabled={loading}
+          style={{ width:"100%", marginTop:20, padding:"13px", background:loading?"#c8cdd9":"#4ECDC4", color:"#fff", border:"none", borderRadius:12, fontSize:15, fontWeight:800, cursor:loading?"not-allowed":"pointer" }}>
+          {loading ? "처리 중…" : mode==="login" ? "로그인" : "회원가입"}
         </button>
+
+        <div style={{ textAlign:"center", marginTop:16 }}>
+          <button onClick={()=>{setMode(mode==="login"?"signup":"login"); setError("");}}
+            style={{ background:"none", border:"none", fontSize:12, color:"#64748b", cursor:"pointer", textDecoration:"underline" }}>
+            {mode==="login" ? "계정이 없으신가요? 회원가입" : "이미 계정이 있으신가요? 로그인"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ── 서브 컴포넌트 ────────────────────────────────────────────
+// ── 서브 컴포넌트 ─────────────────────────────────────────────
 function GaugeBar({ actual, target, color }) {
   return (
     <div style={{ position:"relative", height:6, background:"#eef0f5", borderRadius:3, overflow:"hidden", marginTop:3 }}>
@@ -166,28 +120,23 @@ function GaugeBar({ actual, target, color }) {
 function Sparkline({ values, color }) {
   if (values.length < 2) return React.createElement("span",{style:{color:"#64748b",fontSize:11}},"–");
   const max=Math.max(...values)||1, min=Math.min(...values), range=max-min||1;
-  const W=80, H=28;
-  const pts=values.map((v,i)=>`${(i/(values.length-1))*W},${H-((v-min)/range)*H}`).join(" ");
+  const W=80, H=28, pts=values.map((v,i)=>`${(i/(values.length-1))*W},${H-((v-min)/range)*H}`).join(" ");
   const delta=values[values.length-1]-values[values.length-2];
   return (
     <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-      <svg width={W} height={H}><polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      <svg width={W} height={H}><polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
       <span style={{ fontSize:10, color:delta>=0?"#4ECDC4":"#FF6B6B", fontFamily:"monospace" }}>{delta>=0?"▲":"▼"}{fmt(Math.abs(delta))}</span>
     </div>
   );
 }
 function DonutChart({ data, size=140 }) {
-  const total=data.reduce((s,d)=>s+d.value,0)||1;
-  const r=46, cx=size/2, cy=size/2, sw=14, circ=2*Math.PI*r;
+  const total=data.reduce((s,d)=>s+d.value,0)||1, r=46, cx=size/2, cy=size/2, sw=14, circ=2*Math.PI*r;
   let off=0;
   const segs=data.filter(d=>d.value>0).map(d=>{ const dash=(d.value/total)*circ; const s={...d,dash,gap:circ-dash,off}; off+=dash; return s; });
   return (
     <svg width={size} height={size}>
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#eef0f5" strokeWidth={sw} />
-      {segs.map((s,i)=>(
-        <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth={sw}
-          strokeDasharray={`${s.dash} ${s.gap}`} strokeDashoffset={-s.off+circ/4} />
-      ))}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#eef0f5" strokeWidth={sw}/>
+      {segs.map((s,i)=><circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth={sw} strokeDasharray={`${s.dash} ${s.gap}`} strokeDashoffset={-s.off+circ/4}/>)}
     </svg>
   );
 }
@@ -197,7 +146,7 @@ function TrendCard({ title, color, periods, values }) {
     <div style={{ background:"#f5f7fa", borderRadius:12, padding:14, border:"1px solid #dde1ea" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <div style={{ width:10, height:10, borderRadius:"50%", background:color }} />
+          <div style={{ width:10, height:10, borderRadius:"50%", background:color }}/>
           <span style={{ fontSize:13, fontWeight:700 }}>{title}</span>
         </div>
         <div style={{ textAlign:"right" }}>
@@ -206,9 +155,9 @@ function TrendCard({ title, color, periods, values }) {
         </div>
       </div>
       <div style={{ display:"flex", alignItems:"flex-end", gap:4, height:60 }}>
-        {periods.map((p,i)=>{ const h=max>0?(values[i]/max)*56:0; const isCur=i===periods.length-1;
+        {periods.map((p,i)=>{ const h=max>0?(values[i]/max)*56:0, isCur=i===periods.length-1;
           return <div key={p} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
-            <div style={{ width:"100%", height:h, borderRadius:"3px 3px 0 0", background:isCur?color:`${color}55`, transition:"height 0.4s", minHeight:values[i]>0?2:0 }} />
+            <div style={{ width:"100%", height:h, borderRadius:"3px 3px 0 0", background:isCur?color:`${color}55`, transition:"height 0.4s", minHeight:values[i]>0?2:0 }}/>
             <span style={{ fontSize:9, color:"#475569", textAlign:"center", lineHeight:1.2, whiteSpace:"nowrap" }}>{p}</span>
           </div>;
         })}
@@ -219,62 +168,72 @@ function TrendCard({ title, color, periods, values }) {
 const TH=(e={})=>({ padding:"10px 8px", fontSize:11, fontWeight:700, borderBottom:"1px solid #dde1ea", color:"#64748b", textAlign:"center", letterSpacing:0.5, ...e });
 const TD=(e={})=>({ padding:"10px 6px", verticalAlign:"middle", ...e });
 
-// ── 메인 앱 ──────────────────────────────────────────────────
-function App() {
-  const [entries, setEntries]       = useState(()=>loadLS(LS_ENTRIES,[]));
-  const [ghToken, setGhToken]       = useState(()=>loadLS(LS_TOKEN,""));
-  const [gistId,  setGistId]        = useState(FIXED_GIST_ID);
-  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | saved | error
-  const [syncMsg,    setSyncMsg]    = useState("");
-  const [showSettings, setShowSettings] = useState(false);
-  const [mode,      setMode]        = useState("weekly");
-  const [activeTab, setActiveTab]   = useState("matrix");
-  const [inputDate, setInputDate]   = useState(todayStr());
-  const [editCell,  setEditCell]    = useState(null);
-  const [inputVal,  setInputVal]    = useState("");
+// ── 메인 앱 ───────────────────────────────────────────────────
+function Portfolio({ user, onLogout }) {
+  const [entries,   setEntries]   = useState([]);
+  const [syncMsg,   setSyncMsg]   = useState("불러오는 중…");
+  const [syncColor, setSyncColor] = useState("#F0A500");
+  const [mode,      setMode]      = useState("weekly");
+  const [activeTab, setActiveTab] = useState("matrix");
+  const [inputDate, setInputDate] = useState(todayStr());
+  const [editCell,  setEditCell]  = useState(null);
+  const [inputVal,  setInputVal]  = useState("");
 
-  const isConnected = !!(ghToken && gistId);
-
-  // 앱 시작 시 Gist에서 불러오기
+  // 불러오기
   useEffect(() => {
-    if (!isConnected) return;
-    setSyncStatus("syncing"); setSyncMsg("Gist에서 불러오는 중…");
-    gistLoad(ghToken, gistId)
-      .then(data => {
-        const arr = Array.isArray(data) ? data : (data.entries||[]);
-        setEntries(arr);
-        saveLS(LS_ENTRIES, arr);
-        setSyncStatus("saved"); setSyncMsg("✓ 동기화됨");
-      })
-      .catch(e => { setSyncStatus("error"); setSyncMsg(`불러오기 실패: ${e.message}`); });
-  }, [ghToken, gistId]);
-
-  // 데이터 변경 시 자동 저장 (로컬 + Gist)
-  useEffect(() => {
-    saveLS(LS_ENTRIES, entries);
-    if (!isConnected) return;
-    setSyncStatus("syncing"); setSyncMsg("저장 중…");
-    const t = setTimeout(() => {
-      gistSave(ghToken, gistId, entries)
-        .then(()=>{ setSyncStatus("saved"); setSyncMsg("✓ Gist 저장됨"); })
-        .catch(e=>{ setSyncStatus("error"); setSyncMsg(`저장 실패: ${e.message}`); });
-    }, 1000);
-    return ()=>clearTimeout(t);
-  }, [entries]);
+    sb.from("entries").select("*").eq("user_id", user.id)
+      .then(({ data, error }) => {
+        if (error) { setSyncMsg("❌ 불러오기 실패"); setSyncColor("#FF6B6B"); return; }
+        setEntries((data||[]).map(r=>({ date:r.date, account:r.account, assetId:r.asset_id, amount:r.amount, dbId:r.id })));
+        setSyncMsg("✓ 동기화됨"); setSyncColor("#4ECDC4");
+      });
+  }, [user.id]);
 
   const periodOf = d => mode==="weekly"?getWeekLabel(d):getMonthLabel(d);
   const CP = periodOf(inputDate);
   const periods = useMemo(()=>Array.from(new Set(entries.map(e=>periodOf(e.date)))).sort(),[entries,mode]);
 
-  const getAmt    = (p,acc,aid)=>entries.filter(e=>periodOf(e.date)===p&&e.account===acc&&e.assetId===aid).reduce((s,e)=>s+e.amount,0);
-  const accTotal  = (p,acc)=>ASSETS.reduce((s,a)=>s+getAmt(p,acc,a.id),0);
-  const grandTotal= (p)=>ACCOUNTS.reduce((s,acc)=>s+accTotal(p,acc),0);
-  const assetTotal= (p,aid)=>ACCOUNTS.reduce((s,acc)=>s+getAmt(p,acc,aid),0);
+  const getAmt    = (p,acc,aid) => entries.filter(e=>periodOf(e.date)===p&&e.account===acc&&e.assetId===aid).reduce((s,e)=>s+e.amount,0);
+  const accTotal  = (p,acc)     => ASSETS.reduce((s,a)=>s+getAmt(p,acc,a.id),0);
+  const grandTotal= (p)         => ACCOUNTS.reduce((s,acc)=>s+accTotal(p,acc),0);
+  const assetTotal= (p,aid)     => ACCOUNTS.reduce((s,acc)=>s+getAmt(p,acc,aid),0);
 
-  const openEdit = (acc,aid)=>{ setEditCell({account:acc,assetId:aid}); const c=getAmt(CP,acc,aid); setInputVal(c?(c/10000).toString():""); };
-  const commitEdit = ()=>{ if(!editCell)return; const amt=parseMillion(inputVal); setEntries(prev=>{ const f=prev.filter(e=>!(periodOf(e.date)===CP&&e.account===editCell.account&&e.assetId===editCell.assetId)); if(amt>0)f.push({date:inputDate,account:editCell.account,assetId:editCell.assetId,amount:amt}); return f; }); setEditCell(null); setInputVal(""); };
+  const openEdit = (acc,aid) => {
+    setEditCell({account:acc, assetId:aid});
+    const c=getAmt(CP,acc,aid);
+    setInputVal(c?(c/10000).toString():"");
+  };
 
-  const syncColor = { idle:"#94a3b8", syncing:"#F0A500", saved:"#4ECDC4", error:"#FF6B6B" }[syncStatus];
+  const commitEdit = async () => {
+    if (!editCell) return;
+    const amt = parseMillion(inputVal);
+    setSyncMsg("저장 중…"); setSyncColor("#F0A500");
+
+    // 기존 행 찾기
+    const existing = entries.find(e=>periodOf(e.date)===CP&&e.account===editCell.account&&e.assetId===editCell.assetId);
+
+    try {
+      if (existing) {
+        if (amt > 0) {
+          await sb.from("entries").update({ amount:amt }).eq("id", existing.dbId);
+          setEntries(prev=>prev.map(e=>e.dbId===existing.dbId?{...e,amount:amt}:e));
+        } else {
+          await sb.from("entries").delete().eq("id", existing.dbId);
+          setEntries(prev=>prev.filter(e=>e.dbId!==existing.dbId));
+        }
+      } else if (amt > 0) {
+        const { data, error } = await sb.from("entries").insert({
+          user_id: user.id, date: inputDate, account: editCell.account, asset_id: editCell.assetId, amount: amt
+        }).select().single();
+        if (error) throw error;
+        setEntries(prev=>[...prev, { date:data.date, account:data.account, assetId:data.asset_id, amount:data.amount, dbId:data.id }]);
+      }
+      setSyncMsg("✓ 저장됨"); setSyncColor("#4ECDC4");
+    } catch(e) {
+      setSyncMsg("❌ 저장 실패"); setSyncColor("#FF6B6B");
+    }
+    setEditCell(null); setInputVal("");
+  };
 
   const totalNow  = grandTotal(CP);
   const donutData = ASSETS.map(a=>({label:a.label,color:a.color,value:assetTotal(CP,a.id)}));
@@ -282,13 +241,6 @@ function App() {
 
   return (
     <div style={{ minHeight:"100vh", background:"#ffffff", paddingBottom:60 }}>
-      {showSettings && (
-        <SettingsModal
-          onClose={()=>setShowSettings(false)}
-          onSaved={(t,g)=>{ setGhToken(t); setGistId(g); }}
-        />
-      )}
-
       {/* 헤더 */}
       <div style={{ background:"linear-gradient(135deg,#f8fafc,#eef2ff)", borderBottom:"1px solid #dde1ea", padding:"24px 20px 0" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -297,23 +249,24 @@ function App() {
             <h1 style={{ margin:"2px 0 0", fontSize:22, fontWeight:800 }}>내 투자 포트폴리오</h1>
           </div>
           <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-            <button onClick={()=>setShowSettings(true)}
-              style={{ padding:"6px 12px", fontSize:11, background: isConnected?"#f0fffe":"#fff7ed",
-                border:`1px solid ${isConnected?"#4ECDC4":"#F0A500"}`, color:isConnected?"#0f766e":"#b45309",
-                borderRadius:8, cursor:"pointer", fontWeight:700 }}>
-              {isConnected ? "⚙️ Gist 연동됨" : "⚙️ Gist 연동 설정"}
-            </button>
-            {isConnected && <span style={{ fontSize:11, color:syncColor }}>{syncMsg||"대기 중"}</span>}
+            <span style={{ fontSize:11, color:"#64748b" }}>{user.email}</span>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <span style={{ fontSize:11, color:syncColor }}>{syncMsg}</span>
+              <button onClick={onLogout}
+                style={{ padding:"4px 10px", fontSize:11, background:"#f5f7fa", border:"1px solid #dde1ea", color:"#64748b", borderRadius:6, cursor:"pointer" }}>
+                로그아웃
+              </button>
+            </div>
           </div>
         </div>
 
         <div style={{ display:"flex", gap:8, marginTop:16, flexWrap:"wrap", alignItems:"center" }}>
           <input type="date" value={inputDate} onChange={e=>setInputDate(e.target.value)}
-            style={{ background:"#eef0f5", border:"1px solid #c8cdd9", color:"#1a202c", borderRadius:8, padding:"6px 10px", fontSize:13 }} />
+            style={{ background:"#eef0f5", border:"1px solid #c8cdd9", color:"#1a202c", borderRadius:8, padding:"6px 10px", fontSize:13 }}/>
           <div style={{ display:"flex", background:"#eef0f5", borderRadius:8, border:"1px solid #c8cdd9", overflow:"hidden" }}>
             {["weekly","monthly"].map(m=>(
               <button key={m} onClick={()=>setMode(m)}
-                style={{ padding:"6px 14px", fontSize:12, border:"none", cursor:"pointer", background:mode===m?"#4ECDC4":"transparent", color:mode===m?"#ffffff":"#64748b", fontWeight:mode===m?700:400 }}>
+                style={{ padding:"6px 14px", fontSize:12, border:"none", cursor:"pointer", background:mode===m?"#4ECDC4":"transparent", color:mode===m?"#fff":"#64748b", fontWeight:mode===m?700:400 }}>
                 {m==="weekly"?"주간":"월간"}
               </button>
             ))}
@@ -333,7 +286,6 @@ function App() {
       </div>
 
       <div style={{ padding:"20px 16px" }}>
-
         {/* ══ 매트릭스 ══ */}
         {activeTab==="matrix" && (
           <div>
@@ -351,24 +303,22 @@ function App() {
                 </thead>
                 <tbody>
                   {ASSETS.map(asset=>{
-                    const rowTotal=assetTotal(CP,asset.id);
-                    const actualPct=totalNow>0?(rowTotal/totalNow)*100:0;
+                    const rowTotal=assetTotal(CP,asset.id), actualPct=totalNow>0?(rowTotal/totalNow)*100:0;
                     return (
                       <tr key={asset.id} style={{ borderBottom:"1px solid #eef0f5" }}>
                         <td style={TD({paddingLeft:0})}>
                           <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                            <div style={{ width:8, height:8, borderRadius:"50%", background:asset.color, flexShrink:0 }} />
+                            <div style={{ width:8, height:8, borderRadius:"50%", background:asset.color, flexShrink:0 }}/>
                             <div style={{ flex:1 }}>
                               <div style={{ fontSize:12, fontWeight:600 }}>{asset.label}</div>
                               <div style={{ fontSize:10, color:"#475569", marginTop:1 }}>실{actualPct.toFixed(1)}% / 목{asset.target}%</div>
-                              <GaugeBar actual={actualPct} target={asset.target} color={asset.color} />
+                              <GaugeBar actual={actualPct} target={asset.target} color={asset.color}/>
                             </div>
                           </div>
                         </td>
                         <td style={TD({textAlign:"center",color:"#64748b",fontSize:12})}>{asset.target}%</td>
                         {ACCOUNTS.map(acc=>{
-                          const amt=getAmt(CP,acc,asset.id);
-                          const isEd=editCell?.account===acc&&editCell?.assetId===asset.id;
+                          const amt=getAmt(CP,acc,asset.id), isEd=editCell?.account===acc&&editCell?.assetId===asset.id;
                           return (
                             <td key={acc} style={TD({textAlign:"center"})} onClick={()=>!isEd&&openEdit(acc,asset.id)}>
                               {isEd?(
@@ -376,7 +326,7 @@ function App() {
                                   <input autoFocus value={inputVal} onChange={e=>setInputVal(e.target.value)}
                                     onKeyDown={e=>{if(e.key==="Enter")commitEdit();if(e.key==="Escape")setEditCell(null);}}
                                     placeholder="만원"
-                                    style={{ width:68, padding:"4px 6px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:6, color:"#4ECDC4", fontSize:12, textAlign:"right" }} />
+                                    style={{ width:68, padding:"4px 6px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:6, color:"#4ECDC4", fontSize:12, textAlign:"right" }}/>
                                   <button onClick={commitEdit}
                                     style={{ fontSize:10, padding:"2px 10px", background:"#4ECDC4", color:"#fff", border:"none", borderRadius:4, cursor:"pointer", fontWeight:700 }}>확인</button>
                                 </div>
@@ -393,7 +343,7 @@ function App() {
                         <td style={TD({textAlign:"center"})}>
                           <span style={{ fontSize:12, color:"#F0A500", fontWeight:700 }}>{rowTotal>0?fmt(rowTotal)+"원":"–"}</span>
                         </td>
-                        <td style={TD()}><Sparkline values={periods.map(p=>assetTotal(p,asset.id))} color={asset.color} /></td>
+                        <td style={TD()}><Sparkline values={periods.map(p=>assetTotal(p,asset.id))} color={asset.color}/></td>
                       </tr>
                     );
                   })}
@@ -408,7 +358,7 @@ function App() {
                     <td style={TD({textAlign:"center"})}>
                       <span style={{ fontSize:13, color:"#4ECDC4", fontWeight:800 }}>{totalNow>0?fmt(totalNow)+"원":"–"}</span>
                     </td>
-                    <td style={TD()} />
+                    <td style={TD()}/>
                   </tr>
                 </tbody>
               </table>
@@ -424,9 +374,9 @@ function App() {
                 <div>아직 데이터가 없어요</div>
               </div>
             : <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-                <TrendCard title="총 합계" color="#4ECDC4" periods={periods} values={periods.map(p=>grandTotal(p))} />
+                <TrendCard title="총 합계" color="#4ECDC4" periods={periods} values={periods.map(p=>grandTotal(p))}/>
                 {trendData.filter(a=>a.values.some(v=>v>0)).map(a=>(
-                  <TrendCard key={a.id} title={a.label} color={a.color} periods={periods} values={a.values} />
+                  <TrendCard key={a.id} title={a.label} color={a.color} periods={periods} values={a.values}/>
                 ))}
               </div>
         )}
@@ -436,20 +386,18 @@ function App() {
           <div>
             <div style={{ display:"flex", justifyContent:"center", marginBottom:24 }}>
               <div style={{ textAlign:"center" }}>
-                <DonutChart data={donutData} size={140} />
+                <DonutChart data={donutData} size={140}/>
                 <div style={{ marginTop:8, fontSize:11, color:"#64748b" }}>{CP} 현재</div>
                 <div style={{ fontSize:20, fontWeight:800, color:"#4ECDC4", marginTop:4 }}>{totalNow>0?`총 ${fmt(totalNow)}원`:"데이터 없음"}</div>
               </div>
             </div>
             {ASSETS.map(a=>{
-              const amt=assetTotal(CP,a.id);
-              const actual=totalNow>0?(amt/totalNow)*100:0;
-              const diff=actual-a.target;
+              const amt=assetTotal(CP,a.id), actual=totalNow>0?(amt/totalNow)*100:0, diff=actual-a.target;
               return (
                 <div key={a.id} style={{ background:"#f5f7fa", borderRadius:10, padding:"12px 14px", border:"1px solid #dde1ea", marginBottom:8 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                      <div style={{ width:10, height:10, borderRadius:"50%", background:a.color }} />
+                      <div style={{ width:10, height:10, borderRadius:"50%", background:a.color }}/>
                       <span style={{ fontSize:13, fontWeight:600 }}>{a.label}</span>
                     </div>
                     <div style={{ display:"flex", gap:10, alignItems:"center" }}>
@@ -460,7 +408,7 @@ function App() {
                     </div>
                   </div>
                   <div style={{ background:"#eef0f5", borderRadius:4, height:8, overflow:"hidden" }}>
-                    <div style={{ width:`${Math.min((actual/(a.target||1))*100,100)}%`, height:"100%", background:a.color, borderRadius:4, transition:"width 0.5s" }} />
+                    <div style={{ width:`${Math.min((actual/(a.target||1))*100,100)}%`, height:"100%", background:a.color, borderRadius:4, transition:"width 0.5s" }}/>
                   </div>
                   <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
                     <span style={{ fontSize:11, color:"#475569" }}>{amt>0?fmt(amt)+"원":"미입력"}</span>
@@ -472,7 +420,7 @@ function App() {
             <div style={{ marginTop:20 }}>
               <div style={{ fontSize:13, fontWeight:700, color:"#64748b", marginBottom:10 }}>계좌별 현황</div>
               <div style={{ display:"flex", gap:8 }}>
-                {ACCOUNTS.map(acc=>{ const amt=accTotal(CP,acc); const pct=totalNow>0?(amt/totalNow)*100:0;
+                {ACCOUNTS.map(acc=>{ const amt=accTotal(CP,acc), pct=totalNow>0?(amt/totalNow)*100:0;
                   return <div key={acc} style={{ flex:1, background:"#f5f7fa", borderRadius:10, padding:12, border:"1px solid #dde1ea", textAlign:"center" }}>
                     <div style={{ fontSize:12, color:"#45B7D1", fontWeight:700 }}>{acc}</div>
                     <div style={{ fontSize:14, fontWeight:800, marginTop:6 }}>{amt>0?fmt(amt)+"원":"–"}</div>
@@ -484,9 +432,38 @@ function App() {
           </div>
         )}
       </div>
-      {editCell && <div onClick={()=>setEditCell(null)} style={{ position:"fixed", inset:0, zIndex:-1 }} />}
+      {editCell && <div onClick={()=>setEditCell(null)} style={{ position:"fixed", inset:0, zIndex:-1 }}/>}
     </div>
   );
+}
+
+// ── 루트 ─────────────────────────────────────────────────────
+function App() {
+  const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    sb.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null);
+      setChecking(false);
+    });
+    const { data: { subscription } } = sb.auth.onAuthStateChange((_,session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogout = async () => { await sb.auth.signOut(); };
+
+  if (checking) return (
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#f8fafc" }}>
+      <div style={{ fontSize:13, color:"#64748b" }}>로딩 중…</div>
+    </div>
+  );
+
+  return user
+    ? React.createElement(Portfolio, { user, onLogout: handleLogout })
+    : React.createElement(LoginScreen, { onLogin: setUser });
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
