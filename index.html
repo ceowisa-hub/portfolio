@@ -459,6 +459,94 @@ function Portfolio({ user, onLogout }) {
                 })}
               </div>
             </div>
+
+            {/* 계좌별 투자항목 그래프 */}
+            <div style={{ marginTop:28 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#64748b", marginBottom:16 }}>계좌별 투자항목 비중</div>
+              {accounts.map(acc => {
+                const total = accTotal(CP, acc);
+                const segments = ASSETS.map(a => ({ ...a, amt: getAmt(CP, acc, a.id) })).filter(a => a.amt > 0);
+                return (
+                  <div key={acc} style={{ marginBottom:20 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                      <span style={{ fontSize:14, fontWeight:700, color:"#45B7D1" }}>{acc}</span>
+                      <span style={{ fontSize:13, color:"#64748b" }}>{total > 0 ? fmt(total) : "미입력"}</span>
+                    </div>
+                    {total > 0 ? (
+                      <>
+                        <div style={{ display:"flex", height:28, borderRadius:8, overflow:"hidden", gap:1 }}>
+                          {segments.map(seg => (
+                            <div key={seg.id}
+                              title={`${seg.label}: ${fmt(seg.amt)} (${((seg.amt/total)*100).toFixed(1)}%)`}
+                              style={{ flex: seg.amt, background: seg.color, transition:"flex 0.5s", minWidth:2 }} />
+                          ))}
+                        </div>
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:"6px 14px", marginTop:8 }}>
+                          {segments.map(seg => (
+                            <div key={seg.id} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                              <div style={{ width:8, height:8, borderRadius:2, background:seg.color, flexShrink:0 }} />
+                              <span style={{ fontSize:11, color:"#475569" }}>
+                                {seg.label} <span style={{ fontWeight:700 }}>{((seg.amt/total)*100).toFixed(1)}%</span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ height:28, background:"#eef0f5", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <span style={{ fontSize:12, color:"#94a3b8" }}>데이터 없음</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* 투자항목별 계좌 비중 */}
+              <div style={{ marginTop:8 }}>
+                <div style={{ fontSize:15, fontWeight:700, color:"#64748b", marginBottom:16 }}>투자항목별 계좌 비중</div>
+                {ASSETS.filter(a => assetTotal(CP, a.id) > 0).map(asset => {
+                  const total = assetTotal(CP, asset.id);
+                  return (
+                    <div key={asset.id} style={{ marginBottom:16 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:asset.color }} />
+                          <span style={{ fontSize:14, fontWeight:700 }}>{asset.label}</span>
+                        </div>
+                        <span style={{ fontSize:13, color:"#64748b" }}>{fmt(total)}</span>
+                      </div>
+                      <div style={{ display:"flex", height:20, borderRadius:6, overflow:"hidden", gap:1 }}>
+                        {accounts.map((acc, i) => {
+                          const amt = getAmt(CP, acc, asset.id);
+                          if (amt === 0) return null;
+                          const accColors = ["#45B7D1","#96CEB4","#DDA0DD"];
+                          return (
+                            <div key={acc}
+                              title={`${acc}: ${fmt(amt)} (${((amt/total)*100).toFixed(1)}%)`}
+                              style={{ flex: amt, background: accColors[i % accColors.length], minWidth:2 }} />
+                          );
+                        })}
+                      </div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:"4px 12px", marginTop:6 }}>
+                        {accounts.map((acc, i) => {
+                          const amt = getAmt(CP, acc, asset.id);
+                          if (amt === 0) return null;
+                          const accColors = ["#45B7D1","#96CEB4","#DDA0DD"];
+                          return (
+                            <div key={acc} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                              <div style={{ width:7, height:7, borderRadius:1, background: accColors[i % accColors.length] }} />
+                              <span style={{ fontSize:11, color:"#475569" }}>
+                                {acc} <span style={{ fontWeight:700 }}>{((amt/total)*100).toFixed(1)}%</span>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </div>
