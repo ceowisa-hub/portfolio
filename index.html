@@ -363,7 +363,8 @@ function Portfolio({ user, onLogout }) {
                     const isEditTarget = editAsset?.id===asset.id && editAsset?.field==="target";
                     return (
                       <tr key={asset.id} style={{ borderBottom:"1px solid #eef0f5" }}>
-                        <td style={TD({paddingLeft:0})}>
+                        <td style={TD({paddingLeft:0})}
+                          onClick={()=>{ if(!isEditLabel && !editCell){ setEditAsset({id:asset.id,field:"label"}); setEditAssetVal(asset.label); } }}>
                           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                             <div style={{ width:9, height:9, borderRadius:"50%", background:asset.color, flexShrink:0 }}/>
                             <div style={{ flex:1 }}>
@@ -372,17 +373,17 @@ function Portfolio({ user, onLogout }) {
                                   onChange={e=>setEditAssetVal(e.target.value)}
                                   onBlur={()=>commitAssetEdit(asset.id)}
                                   onKeyDown={e=>{ if(e.key==="Enter")commitAssetEdit(asset.id); if(e.key==="Escape"){setEditAsset(null);setEditAssetVal("");} }}
+                                  onClick={e=>e.stopPropagation()}
                                   style={{ width:"100%", padding:"3px 6px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:5, color:"#1a202c", fontSize:14, fontWeight:600, outline:"none" }}/>
                               ) : (
-                                <div title="클릭하여 수정" onClick={()=>{ setEditAsset({id:asset.id,field:"label"}); setEditAssetVal(asset.label); }}
-                                  style={{ fontSize:14, fontWeight:600, cursor:"pointer", borderBottom:"1px dashed #c8cdd9", display:"inline-block" }}>{asset.label}</div>
+                                <div style={{ fontSize:14, fontWeight:600, cursor:"pointer", textDecoration:"underline dotted #aaa", textUnderlineOffset:3 }}>{asset.label} <span style={{ fontSize:10, color:"#b0b8c8" }}>✎</span></div>
                               )}
                               <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>실{actualPct.toFixed(1)}% / 목{asset.target}%</div>
                               <GaugeBar actual={actualPct} target={asset.target} color={asset.color}/>
                             </div>
                           </div>
                         </td>
-                        <td style={TD({textAlign:"center",cursor:"pointer"})}
+                        <td style={TD({textAlign:"center", cursor:"pointer"})}
                           onClick={()=>{ if(!isEditTarget){ setEditAsset({id:asset.id,field:"target"}); setEditAssetVal(String(asset.target)); } }}>
                           {isEditTarget ? (
                             <input autoFocus value={editAssetVal}
@@ -392,7 +393,7 @@ function Portfolio({ user, onLogout }) {
                               onClick={e=>e.stopPropagation()}
                               style={{ width:46, padding:"3px 4px", background:"#f0fff4", border:"1px solid #4ECDC4", borderRadius:5, color:"#4ECDC4", fontSize:14, fontWeight:700, textAlign:"center", outline:"none" }}/>
                           ) : (
-                            <span title="클릭하여 수정" style={{ color:"#64748b", fontSize:14, borderBottom:"1px dashed #c8cdd9" }}>{asset.target}%</span>
+                            <span style={{ color:"#4ECDC4", fontSize:14, fontWeight:700, textDecoration:"underline dotted #aaa", textUnderlineOffset:3 }}>{asset.target}% <span style={{ fontSize:10, color:"#b0b8c8" }}>✎</span></span>
                           )}
                         </td>
                         {accounts.map((acc,i)=>{
