@@ -29,8 +29,9 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 const DEFAULT_ACCOUNTS = ["A계좌", "B계좌", "C계좌"];
 const LS_ACCOUNTS = "portfolio-accounts-v1";
+const LS_ASSETS   = "portfolio-assets-v1";
 
-const ASSETS = [
+const DEFAULT_ASSETS = [
   { id: "domestic_stock",  label: "국내주식",         target: 30, color: "#4ECDC4" },
   { id: "overseas_etf",    label: "국내상장 해외ETF",  target: 30, color: "#45B7D1" },
   { id: "foreign_stock",   label: "해외주식 직접투자", target: 20, color: "#96CEB4" },
@@ -190,6 +191,7 @@ const TD=(e={})=>({ padding:"12px 6px", verticalAlign:"middle", ...e });
 function Portfolio({ user, onLogout }) {
   const [entries,    setEntries]    = useState([]);
   const [accounts,   setAccounts]   = useState(()=>loadLS(LS_ACCOUNTS, DEFAULT_ACCOUNTS));
+  const [assets,     setAssets]     = useState(()=>loadLS(LS_ASSETS, DEFAULT_ASSETS));
   const [syncMsg,    setSyncMsg]    = useState("불러오는 중…");
   const [syncColor,  setSyncColor]  = useState("#F0A500");
   const [mode,       setMode]       = useState("weekly");
@@ -197,7 +199,10 @@ function Portfolio({ user, onLogout }) {
   const [inputDate,  setInputDate]  = useState(todayStr());
   const [editCell,   setEditCell]   = useState(null);
   const [inputVal,   setInputVal]   = useState("");
-  const [showAccMod, setShowAccMod] = useState(false);
+  const [editAcc,    setEditAcc]    = useState(null);   // index
+  const [editAccVal, setEditAccVal] = useState("");
+  const [editAsset,  setEditAsset]  = useState(null);  // { id, field: "label"|"target" }
+  const [editAssetVal,setEditAssetVal]=useState("");
 
   useEffect(() => {
     sb.from("entries").select("*").eq("user_id", user.id)
@@ -213,9 +218,26 @@ function Portfolio({ user, onLogout }) {
   const periods = useMemo(()=>Array.from(new Set(entries.map(e=>periodOf(e.date)))).sort(),[entries,mode]);
 
   const getAmt    = (p,acc,aid) => entries.filter(e=>periodOf(e.date)===p&&e.account===acc&&e.assetId===aid).reduce((s,e)=>s+e.amount,0);
-  const accTotal  = (p,acc)     => ASSETS.reduce((s,a)=>s+getAmt(p,acc,a.id),0);
+  const accTotal  = (p,acc)     => assets.reduce((s,a)=>s+getAmt(p,acc,a.id),0);
   const grandTotal= (p)         => accounts.reduce((s,acc)=>s+accTotal(p,acc),0);
   const assetTotal= (p,aid)     => accounts.reduce((s,acc)=>s+getAmt(p,acc,aid),0);
+
+  const saveAccounts = (vals) => { setAccounts(vals); saveLS(LS_ACCOUNTS, vals); };
+  const saveAssets   = (vals) => { setAssets(vals);   saveLS(LS_ASSETS, vals); };
+
+  const commitAccEdit = (i) => {
+    const trimmed = editAccVal.trim();
+    if (trimmed) { const a=[...accounts]; a[i]=trimmed; saveAccounts(a); }
+    setEditAcc(null); setEditAccVal("");
+  };
+  const commitAssetEdit = (id) => {
+    const a = assets.map(x => {
+      if (x.id !== id) return x;
+      if (editAsset.field === "label") return { ...x, label: editAssetVal.trim() || x.label };
+      const n = parseInt(editAssetVal); return { ...x, target: isNaN(n)?x.target:Math.max(0,Math.min(100,n)) };
+    });
+    saveAssets(a); setEditAsset(null); setEditAssetVal("");
+  };
 
   const openEdit = (acc,aid) => {
     setEditCell({account:acc, assetId:aid});
@@ -253,19 +275,12 @@ function Portfolio({ user, onLogout }) {
     setEditCell(null); setInputVal("");
   };
 
-  const saveAccounts = (vals) => {
-    setAccounts(vals);
-    saveLS(LS_ACCOUNTS, vals);
-    setShowAccMod(false);
-  };
-
   const totalNow  = grandTotal(CP);
-  const donutData = ASSETS.map(a=>({label:a.label,color:a.color,value:assetTotal(CP,a.id)}));
-  const trendData = ASSETS.map(a=>({...a,values:periods.map(p=>assetTotal(p,a.id))}));
+  const donutData = assets.map(a=>({label:a.label,color:a.color,value:assetTotal(CP,a.id)}));
+  const trendData = assets.map(a=>({...a,values:periods.map(p=>assetTotal(p,a.id))}));
 
   return (
-    <div style={{ minHeight:"100vh", background:"#ffffff", paddingBottom:60 }}>
-      {showAccMod && <AccountModal accounts={accounts} onSave={saveAccounts} onClose={()=>setShowAccMod(false)} />}
+    <div style={{ minHeight:"100vh", background:"#ffffff", paddingBottom:60 }}>}
 
       {/* 헤더 */}
       <div style={{ background:"linear-gradient(135deg,#f8fafc,#eef2ff)", borderBottom:"1px solid #dde1ea", padding:"24px 20px 0" }}>
@@ -297,11 +312,7 @@ function Portfolio({ user, onLogout }) {
               </button>
             ))}
           </div>
-          <button onClick={()=>setShowAccMod(true)}
-            style={{ padding:"7px 14px", fontSize:13, background:"#eef0f5", border:"1px solid #c8cdd9", color:"#475569", borderRadius:8, cursor:"pointer", fontWeight:600 }}>
-            ✏️ 계좌명 수정
-          </button>
-          <div style={{ marginLeft:"auto", background:"#eef0f5", border:"1px solid #c8cdd9", borderRadius:8, padding:"7px 14px", fontSize:13, color:"#4ECDC4" }}>{CP} 기준</div>
+<div style={{ marginLeft:"auto", background:"#eef0f5", border:"1px solid #c8cdd9", borderRadius:8, padding:"7px 14px", fontSize:13, color:"#4ECDC4" }}>{CP} 기준</div>
         </div>
 
         <div style={{ display:"flex", marginTop:20 }}>
@@ -319,38 +330,75 @@ function Portfolio({ user, onLogout }) {
         {/* ══ 매트릭스 ══ */}
         {activeTab==="matrix" && (
           <div>
-            <p style={{ fontSize:13, color:"#64748b", marginBottom:14 }}>셀을 클릭하여 금액(원 단위)을 입력 후 Enter로 저장하세요</p>
+            <p style={{ fontSize:13, color:"#64748b", marginBottom:14 }}>금액 셀을 클릭해 입력 · 계좌명/항목명/목표%도 클릭하면 수정돼요</p>
             <div style={{ overflowX:"auto" }}>
               <table style={{ width:"100%", minWidth:560 }}>
                 <thead>
                   <tr>
                     <th style={TH({width:150,textAlign:"left"})}>투자항목</th>
-                    <th style={TH({width:56,color:"#4ECDC4"})}>목표</th>
-                    {accounts.map(acc=><th key={acc} style={TH({color:"#45B7D1"})}>{acc}</th>)}
+                    <th style={TH({width:60,color:"#4ECDC4"})}>목표%</th>
+                    {accounts.map((acc,i)=>(
+                      <th key={i} style={TH({color:"#45B7D1",cursor:"pointer"})}
+                        onClick={()=>{ if(editAcc!==i){ setEditAcc(i); setEditAccVal(acc); } }}>
+                        {editAcc===i ? (
+                          <input autoFocus value={editAccVal}
+                            onChange={e=>setEditAccVal(e.target.value)}
+                            onBlur={()=>commitAccEdit(i)}
+                            onKeyDown={e=>{ if(e.key==="Enter")commitAccEdit(i); if(e.key==="Escape"){setEditAcc(null);setEditAccVal("");} }}
+                            onClick={e=>e.stopPropagation()}
+                            style={{ width:80, padding:"3px 6px", background:"#eef8ff", border:"1px solid #45B7D1", borderRadius:5, color:"#45B7D1", fontSize:13, fontWeight:700, textAlign:"center", outline:"none" }}/>
+                        ) : (
+                          <span title="클릭하여 수정" style={{ borderBottom:"1px dashed #b5d8f5", paddingBottom:1 }}>{acc}</span>
+                        )}
+                      </th>
+                    ))}
                     <th style={TH({color:"#F0A500"})}>합계</th>
                     <th style={TH({color:"#64748b",width:110})}>추이</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ASSETS.map(asset=>{
+                  {assets.map(asset=>{
                     const rowTotal=assetTotal(CP,asset.id), actualPct=totalNow>0?(rowTotal/totalNow)*100:0;
+                    const isEditLabel  = editAsset?.id===asset.id && editAsset?.field==="label";
+                    const isEditTarget = editAsset?.id===asset.id && editAsset?.field==="target";
                     return (
                       <tr key={asset.id} style={{ borderBottom:"1px solid #eef0f5" }}>
                         <td style={TD({paddingLeft:0})}>
                           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                             <div style={{ width:9, height:9, borderRadius:"50%", background:asset.color, flexShrink:0 }}/>
                             <div style={{ flex:1 }}>
-                              <div style={{ fontSize:14, fontWeight:600 }}>{asset.label}</div>
+                              {isEditLabel ? (
+                                <input autoFocus value={editAssetVal}
+                                  onChange={e=>setEditAssetVal(e.target.value)}
+                                  onBlur={()=>commitAssetEdit(asset.id)}
+                                  onKeyDown={e=>{ if(e.key==="Enter")commitAssetEdit(asset.id); if(e.key==="Escape"){setEditAsset(null);setEditAssetVal("");} }}
+                                  style={{ width:"100%", padding:"3px 6px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:5, color:"#1a202c", fontSize:14, fontWeight:600, outline:"none" }}/>
+                              ) : (
+                                <div title="클릭하여 수정" onClick={()=>{ setEditAsset({id:asset.id,field:"label"}); setEditAssetVal(asset.label); }}
+                                  style={{ fontSize:14, fontWeight:600, cursor:"pointer", borderBottom:"1px dashed #c8cdd9", display:"inline-block" }}>{asset.label}</div>
+                              )}
                               <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>실{actualPct.toFixed(1)}% / 목{asset.target}%</div>
                               <GaugeBar actual={actualPct} target={asset.target} color={asset.color}/>
                             </div>
                           </div>
                         </td>
-                        <td style={TD({textAlign:"center",color:"#64748b",fontSize:14})}>{asset.target}%</td>
-                        {accounts.map(acc=>{
+                        <td style={TD({textAlign:"center",cursor:"pointer"})}
+                          onClick={()=>{ if(!isEditTarget){ setEditAsset({id:asset.id,field:"target"}); setEditAssetVal(String(asset.target)); } }}>
+                          {isEditTarget ? (
+                            <input autoFocus value={editAssetVal}
+                              onChange={e=>setEditAssetVal(e.target.value)}
+                              onBlur={()=>commitAssetEdit(asset.id)}
+                              onKeyDown={e=>{ if(e.key==="Enter")commitAssetEdit(asset.id); if(e.key==="Escape"){setEditAsset(null);setEditAssetVal("");} }}
+                              onClick={e=>e.stopPropagation()}
+                              style={{ width:46, padding:"3px 4px", background:"#f0fff4", border:"1px solid #4ECDC4", borderRadius:5, color:"#4ECDC4", fontSize:14, fontWeight:700, textAlign:"center", outline:"none" }}/>
+                          ) : (
+                            <span title="클릭하여 수정" style={{ color:"#64748b", fontSize:14, borderBottom:"1px dashed #c8cdd9" }}>{asset.target}%</span>
+                          )}
+                        </td>
+                        {accounts.map((acc,i)=>{
                           const amt=getAmt(CP,acc,asset.id), isEd=editCell?.account===acc&&editCell?.assetId===asset.id;
                           return (
-                            <td key={acc} style={TD({textAlign:"center"})} onClick={()=>!isEd&&openEdit(acc,asset.id)}>
+                            <td key={i} style={TD({textAlign:"center"})} onClick={()=>!isEd&&openEdit(acc,asset.id)}>
                               {isEd?(
                                 <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
                                   <input autoFocus value={inputVal}
@@ -358,7 +406,7 @@ function Portfolio({ user, onLogout }) {
                                     onKeyDown={e=>{ if(e.key==="Enter")commitEdit(); if(e.key==="Escape")setEditCell(null); }}
                                     placeholder="원"
                                     style={{ width:100, padding:"5px 8px", background:"#f0fffe", border:"1px solid #4ECDC4", borderRadius:6, color:"#4ECDC4", fontSize:14, textAlign:"right", outline:"none" }}/>
-                                  <div style={{ fontSize:10, color:"#94a3b8" }}>Enter로 저장 / Esc 취소</div>
+                                  <div style={{ fontSize:10, color:"#94a3b8" }}>Enter저장 / Esc취소</div>
                                 </div>
                               ):(
                                 <div style={{ padding:"8px 4px", borderRadius:6, cursor:"pointer", background:amt>0?"rgba(78,205,196,0.12)":"transparent", border:"1px solid transparent", minHeight:42, display:"flex", alignItems:"center", justifyContent:"center", transition:"border 0.15s" }}
@@ -379,9 +427,11 @@ function Portfolio({ user, onLogout }) {
                   })}
                   <tr style={{ background:"#eef2ff", borderTop:"2px solid #c8cdd9" }}>
                     <td style={TD({color:"#64748b",fontSize:14})}>합계</td>
-                    <td style={TD({textAlign:"center",color:"#64748b",fontSize:13})}>100%</td>
-                    {accounts.map(acc=>(
-                      <td key={acc} style={TD({textAlign:"center"})}>
+                    <td style={TD({textAlign:"center",color:"#64748b",fontSize:13})}>
+                      {(() => { const t=assets.reduce((s,a)=>s+a.target,0); return <span style={{ color: t===100?"#4ECDC4":"#FF6B6B", fontWeight:700 }}>{t}%</span>; })()}
+                    </td>
+                    {accounts.map((acc,i)=>(
+                      <td key={i} style={TD({textAlign:"center"})}>
                         <span style={{ fontSize:14, color:"#45B7D1", fontWeight:700 }}>{accTotal(CP,acc)>0?fmt(accTotal(CP,acc)):"–"}</span>
                       </td>
                     ))}
@@ -421,7 +471,7 @@ function Portfolio({ user, onLogout }) {
                 <div style={{ fontSize:22, fontWeight:800, color:"#4ECDC4", marginTop:4 }}>{totalNow>0?`총 ${fmt(totalNow)}`:"데이터 없음"}</div>
               </div>
             </div>
-            {ASSETS.map(a=>{
+            {assets.map(a=>{
               const amt=assetTotal(CP,a.id), actual=totalNow>0?(amt/totalNow)*100:0, diff=actual-a.target;
               return (
                 <div key={a.id} style={{ background:"#f5f7fa", borderRadius:10, padding:"14px 16px", border:"1px solid #dde1ea", marginBottom:10 }}>
@@ -465,7 +515,7 @@ function Portfolio({ user, onLogout }) {
               <div style={{ fontSize:15, fontWeight:700, color:"#64748b", marginBottom:16 }}>계좌별 투자항목 비중</div>
               {accounts.map(acc => {
                 const total = accTotal(CP, acc);
-                const segments = ASSETS.map(a => ({ ...a, amt: getAmt(CP, acc, a.id) })).filter(a => a.amt > 0);
+                const segments = assets.map(a => ({ ...a, amt: getAmt(CP, acc, a.id) })).filter(a => a.amt > 0);
                 return (
                   <div key={acc} style={{ marginBottom:20 }}>
                     <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
@@ -504,7 +554,7 @@ function Portfolio({ user, onLogout }) {
               {/* 투자항목별 계좌 비중 */}
               <div style={{ marginTop:8 }}>
                 <div style={{ fontSize:15, fontWeight:700, color:"#64748b", marginBottom:16 }}>투자항목별 계좌 비중</div>
-                {ASSETS.filter(a => assetTotal(CP, a.id) > 0).map(asset => {
+                {assets.filter(a => assetTotal(CP, a.id) > 0).map(asset => {
                   const total = assetTotal(CP, asset.id);
                   return (
                     <div key={asset.id} style={{ marginBottom:16 }}>
